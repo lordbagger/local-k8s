@@ -10,20 +10,17 @@
         name:
           - sudo
         state: latest
-      become: true
 
     - name: Ensures {{ primary_group }} exists
       ansible.builtin.group:
         name: "{{ primary_group }}"
         state: present
-      become: true
 
     - name: Ensures {{ additional_groups }} exists
       ansible.builtin.group:
         name: "{{ item }}"
         state: present
       loop: "{{ additional_groups }}"
-      become: true
 
     - name: Ensures {{ user }} exists
       ansible.builtin.user:
@@ -32,14 +29,12 @@
         groups: "{{ additional_groups }}"
         shell: /bin/bash
         state: present
-      become: true
 
     # The ACL package is required by Ansible
     - name: Install ACL
       ansible.builtin.package:
         name: acl
         state: present
-      become: true
 
     - name: Retrieve user ID
       ansible.builtin.shell: id -u
@@ -84,14 +79,12 @@
         user: "{{ user }}"
         key: "{{ ssh_pubkey.content | b64decode }}"
         state: present
-      become: true
 
     - name: Ensure sshd_config.d directory exists
       ansible.builtin.file:
         path: /etc/ssh/sshd_config.d
         state: directory
         mode: "0755"
-      become: true
 
     - name: Deploy SSH hardening configuration
       ansible.builtin.template:
@@ -101,7 +94,6 @@
         group: root
         mode: "0644"
         validate: "sshd -t -f %s"
-      become: true
       notify: Restart sshd
 
   handlers:
