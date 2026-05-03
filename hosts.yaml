@@ -1,0 +1,12 @@
+nodes:
+  vars:
+    user: brokk
+    primary_group: "{{ user }}"
+    additional_groups:
+      - sudo
+      - ssh-user
+    ssh_public_key_path: ~/.ssh/brokk.pub
+  hosts:
+    node1:
+    node2:
+    node3:

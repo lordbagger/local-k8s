@@ -1,0 +1,16 @@
+# Managed by Ansible - SSH Hardening
+# File: /etc/ssh/sshd_config.d/00-hardening.conf
+
+# Enable public key authentication
+PubkeyAuthentication yes
+
+# Disable password authentication
+PasswordAuthentication no
+PermitRootLogin no
+
+# Disable keyboard-interactive authentication
+KbdInteractiveAuthentication no
+ChallengeResponseAuthentication no
+
+# Disable PAM entirely
+UsePAM no

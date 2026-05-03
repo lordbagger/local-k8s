@@ -1,0 +1,111 @@
+---
+- name: Configure SSH access on remote servers
+  hosts: nodes
+  vars:
+    ansible_user: root
+
+  tasks:
+    - name: Installs sudo
+      ansible.builtin.package:
+        name:
+          - sudo
+        state: latest
+      become: true
+
+    - name: Ensures {{ primary_group }} exists
+      ansible.builtin.group:
+        name: "{{ primary_group }}"
+        state: present
+      become: true
+
+    - name: Ensures {{ additional_groups }} exists
+      ansible.builtin.group:
+        name: "{{ item }}"
+        state: present
+      loop: "{{ additional_groups }}"
+      become: true
+
+    - name: Ensures {{ user }} exists
+      ansible.builtin.user:
+        name: "{{ user }}"
+        group: "{{ primary_group }}"
+        groups: "{{ additional_groups }}"
+        shell: /bin/bash
+        state: present
+      become: true
+
+    # The ACL package is required by Ansible
+    - name: Install ACL
+      ansible.builtin.package:
+        name: acl
+        state: present
+      become: true
+
+    - name: Retrieve user ID
+      ansible.builtin.shell: id -u
+      register: user_id
+      become: true
+      become_user: "{{ user }}"
+
+    - name: Extend .bashrc
+      ansible.builtin.lineinfile:
+        path: "/home/{{ user }}/.bashrc"
+        owner: "{{ user }}"
+        group: "{{ primary_group }}"
+        line: "{{ item }}"
+        state: present
+      loop:
+        - "export LANG=C"
+        - 'export XDG_RUNTIME_DIR="/run/user/$UID"'
+        - 'export XDG_CONFIG_HOME="/home/{{ user }}/.config"'
+        - 'export DBUS_SESSION_BUS_ADDRESS="unix:path=${XDG_RUNTIME_DIR}/bus"'
+      become: true
+      become_user: "{{ user }}"
+
+    - name: Create ~/system directory
+      ansible.builtin.file:
+        path: "/home/{{ user }}/system"
+        owner: "{{ user }}"
+        group: "{{ primary_group }}"
+        state: directory
+        mode: "0755"
+      become: true
+      become_user: "{{ user }}"
+
+    - name: Read public key from localhost
+      ansible.builtin.slurp:
+        src: "{{ ssh_public_key_path }}"
+      delegate_to: localhost
+      run_once: true
+      register: ssh_pubkey
+
+    - name: Install public key in authorized_keys
+      ansible.builtin.authorized_key:
+        user: "{{ user }}"
+        key: "{{ ssh_pubkey.content | b64decode }}"
+        state: present
+      become: true
+
+    - name: Ensure sshd_config.d directory exists
+      ansible.builtin.file:
+        path: /etc/ssh/sshd_config.d
+        state: directory
+        mode: "0755"
+      become: true
+
+    - name: Deploy SSH hardening configuration
+      ansible.builtin.template:
+        src: 00-hardening.conf.j2
+        dest: /etc/ssh/sshd_config.d/00-hardening.conf
+        owner: root
+        group: root
+        mode: "0644"
+        validate: "sshd -t -f %s"
+      become: true
+      notify: Restart sshd
+
+  handlers:
+    - name: Restart sshd
+      ansible.builtin.service:
+        name: sshd
+        state: restarted

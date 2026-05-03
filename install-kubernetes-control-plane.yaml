@@ -1,0 +1,57 @@
+---
+- name: Install Kubernetes on control plane (Fedora)
+  hosts: localhost
+  become: true
+  vars:
+    kubernetes_version: v1.35
+    crio_version: v1.35
+  tasks:
+    - name: Adds Kubernetes repository
+      ansible.builtin.template:
+        src: templates/kubernetes.repo.j2
+        dest: /etc/yum.repos.d/kubernetes.repo
+
+    - name: Adds CRI-O repository
+      ansible.builtin.template:
+        src: templates/cri-o.repo.j2
+        dest: /etc/yum.repos.d/cri-o.repo
+
+    - name: Install kubeadm, kubelet and kubectl
+      ansible.builtin.package:
+        name:
+          - cri-o
+          - kubeadm
+          - kubelet
+          - kubectl
+          - container-selinux
+        state: latest
+
+    - name: Disable swap
+      ansible.builtin.shell: swapoff -a
+
+    - name: Disable swap on startup
+      ansible.builtin.shell: sed -i '/swap/s/^\(.*\)$/#\1/g' /etc/fstab
+
+    - name: Install Helm
+      ansible.builtin.get_url:
+        url: https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-4"
+        dest: /home/erikbagger/get_helm.sh
+
+    - name: Install Cilium CNI plugin
+      ansible.builtin.shell: helm upgrade --install cilium cilium/cilium --version 1.18.6 --namespace kube-system
+
+    #- name: Install Calico CNI plugin
+    #  ansible.builtin.shell: kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.26.0/manifests/calico.yaml
+    #  become: false
+
+    - name: Enable CRI-O
+      ansible.builtin.service:
+        name: crio
+        state: reloaded
+        enabled: true
+
+    - name: Enable kubelet
+      ansible.builtin.service:
+        name: kubelet
+        state: reloaded
+        enabled: true
