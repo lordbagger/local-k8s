@@ -1,0 +1,20 @@
+---
+- name: Install KVM and its dependencies
+  hosts: localhost
+  become: true
+
+  tasks:
+    - name: "Install qemu-kvm, libvirt, virt-install, dnf-plugins-core"
+      ansible.builtin.package:
+        name:
+          - qemu-kvm
+          - libvirt
+          - virt-install
+          - dnf-plugins-core
+        state: latest
+
+    - name: "Enable libvirtd service"
+      ansible.builtin.service:
+        name: libvirtd
+        state: reloaded
+        enabled: true
