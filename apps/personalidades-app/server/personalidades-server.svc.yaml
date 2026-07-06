@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: Service
+metadata:
+  creationTimestamp: "2026-07-06T17:10:36Z"
+  labels:
+    app: personalidades-server
+  name: personalidades-server-svc
+  namespace: default
+  resourceVersion: "314281"
+  uid: 96ed50a6-9202-4bef-8088-e6cd7fe5aab2
+spec:
+  clusterIP: 10.97.215.176
+  clusterIPs:
+  - 10.97.215.176
+  internalTrafficPolicy: Cluster
+  ipFamilies:
+  - IPv4
+  ipFamilyPolicy: SingleStack
+  ports:
+  - port: 8000
+    protocol: TCP
+    targetPort: 8000
+  selector:
+    app: personalidades-server
+  sessionAffinity: None
+  type: ClusterIP
+status:
+  loadBalancer: {}
