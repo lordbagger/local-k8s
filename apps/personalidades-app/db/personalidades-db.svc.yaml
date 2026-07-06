@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: Service
+metadata:
+  creationTimestamp: "2026-07-06T16:49:11Z"
+  labels:
+    app: db
+  name: personalidades-db-svc
+  namespace: default
+  resourceVersion: "311496"
+  uid: 6336ad65-eab6-4d22-948c-f91378e90190
+spec:
+  clusterIP: 10.105.48.140
+  clusterIPs:
+    - 10.105.48.140
+  internalTrafficPolicy: Cluster
+  ipFamilies:
+    - IPv4
+  ipFamilyPolicy: SingleStack
+  ports:
+    - port: 5432
+      protocol: TCP
+      targetPort: 5432
+  selector:
+    app: db
+  sessionAffinity: None
+  type: ClusterIP
+status:
+  loadBalancer: {}
