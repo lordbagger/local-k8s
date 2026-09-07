@@ -4,9 +4,14 @@ Environment:
 
 1 Control Plane: Fedora 43 KDE Plasma
 
-3 Worker Nodes:
+4 Worker Nodes:
 
-Debian 13 Trixie running locally as Virtual Machines:
+1 Lenovo laptop:
+
+- 8GB RAM
+- 1 TB SSD
+
+3 KVM Debian 13 Trixie nodes running locally:
 
 - 4GB RAM
 - 4 CPUs
@@ -15,26 +20,48 @@ Debian 13 Trixie running locally as Virtual Machines:
 
 1. SSH key pair generated and store in ~/.ssh/ on master node:
 
-ssh-keygen -t ed25519 -f ~/.ssh/brokk
+ssh-keygen -t ed25519 -f ~/.ssh/sindri
 
-2. Nodes up and running with OpenSSH server installed and the following entries in sshd_config:
+2. Terraform and Ansible installed
 
-PermitRootLogin yes
-PasswordAuthentication yes
+## Create and start Worker Nodes
 
-## Configure SSH for user "brokk" and disable SSH connectivity for root user
+1. Navigate to the directory ./terraform/
 
-The playbook configure-ssh.yaml will:
+2. Run "terraform init"
 
-- Create an user (brokk)
-- Configure ssh access via public key
-- Disable remote login for user 'root'
+3. Run "terraform plan"
 
-Command: ansible-playbook -i hosts.yaml configure-ssh.yaml --connection-password-file password_file
+4. Have a look at the output written by the previous command. If everything is ok, run "terraform apply"
 
-After the playbook exits successfully, all ssh connectivity is done with the created user and its public key
+5. After the VMs are up and running, add a configuration for each one of them in your ~/.ssh/config file:
+
+```
+Host jotunheim
+  HostName 192.168.122.152
+  User sindri
+  PreferredAuthentications publickey
+  IdentityFile ~/.ssh/sindri
+Host nilfheim
+  HostName 192.168.122.112
+  User sindri
+  PreferredAuthentications publickey
+  IdentityFile ~/.ssh/sindri
+Host vanaheim
+  HostName 192.168.122.133
+  User sindri
+  PreferredAuthentications publickey
+  IdentityFile ~/.ssh/sindri
+```
+
+## TODO: automate step 5
 
 ## Install Kubernetes (control plane, then worker nodes, then join):
+
+
+ansible-playbook -i hosts.yaml site.yaml --ask-become-pass
+
+OR (in case you have a file with your sudo password):
 
 ansible-playbook -i hosts.yaml site.yaml --become-password-file become_password
 
