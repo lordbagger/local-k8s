@@ -1,0 +1,206 @@
+---
+- name: Install Kubernetes on control plane (Fedora)
+  hosts: control_plane
+  become: true
+  vars:
+    kubernetes_version: v1.36
+    crio_version: v1.36
+    pod_network_cidr: 10.244.0.0/16
+    admin_user: erikbagger
+    control_plane_endpoint: "{{ groups['control_plane'][0] }}"
+  tasks:
+    - name: Adds Kubernetes repository
+      ansible.builtin.template:
+        src: templates/kubernetes.repo.j2
+        dest: /etc/yum.repos.d/kubernetes.repo
+
+    - name: Adds CRI-O repository
+      ansible.builtin.template:
+        src: templates/cri-o.repo.j2
+        dest: /etc/yum.repos.d/cri-o.repo
+
+    - name: Install kubeadm, kubelet and kubectl
+      ansible.builtin.package:
+        name:
+          - cri-o
+          - kubeadm
+          - kubelet
+          - kubectl
+          - crictl
+          - container-selinux
+        state: present
+
+    - name: Install dnf versionlock plugin
+      ansible.builtin.package:
+        name: python3-dnf-plugin-versionlock
+        state: present
+
+    - name: Lock kubeadm, kubelet, kubectl and cri-o versions
+      ansible.builtin.command: dnf versionlock add kubeadm kubelet kubectl cri-o
+      register: versionlock_result
+      changed_when: "'Adding versionlock' in versionlock_result.stdout"
+
+    - name: Enable and start CRI-O
+      ansible.builtin.service:
+        name: crio
+        state: started
+        enabled: true
+
+    - name: Enable and start kubelet
+      ansible.builtin.service:
+        name: kubelet
+        state: started
+        enabled: true
+
+    - name: Check active swap
+      ansible.builtin.command: swapon --show
+      register: swap_status
+      changed_when: false
+
+    - name: Disable swap
+      ansible.builtin.command: swapoff -a
+      when: swap_status.stdout != ""
+
+    - name: Disable swap on startup
+      ansible.builtin.replace:
+        path: /etc/fstab
+        regexp: '^([^#\n]*\sswap\s+swap\s.*)$'
+        replace: '#\1'
+
+    - name: Persist br_netfilter kernel module across reboots
+      ansible.builtin.copy:
+        dest: /etc/modules-load.d/k8s.conf
+        content: "br_netfilter\n"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Load br_netfilter kernel module
+      community.general.modprobe:
+        name: br_netfilter
+        state: present
+
+    - name: Configure sysctl for Kubernetes networking
+      ansible.builtin.template:
+        src: templates/k8s-networking.conf.j2
+        dest: /etc/sysctl.d/k8s.conf
+        owner: root
+        group: root
+        mode: "0644"
+
+    # This task is here only to reload sysctl without reboot
+    - name: Reload sysctl settings for Kubernetes networking
+      ansible.posix.sysctl:
+        name: "{{ item }}"
+        value: "1"
+        sysctl_set: true
+        state: present
+        reload: true
+      loop:
+        - net.ipv4.ip_forward
+        - net.bridge.bridge-nf-call-iptables
+        - net.bridge.bridge-nf-call-ip6tables
+
+    - name: "Stop {{ control_plane_endpoint }} resolving to the IPv6 loopback"
+      # kube-apiserver binds 0.0.0.0 (IPv4-only), so a ::1 answer is a refused connection
+      ansible.builtin.replace:
+        path: /etc/hosts
+        regexp: '^(::1\s+.*?)\s+{{ control_plane_endpoint }}\b(.*)$'
+        replace: '\1\2'
+
+    - name: "Check whether {{ control_plane_endpoint }} resolves over IPv4"
+      ansible.builtin.command: "getent ahostsv4 {{ control_plane_endpoint }}"
+      register: cp_name_v4
+      changed_when: false
+      failed_when: false
+
+    - name: "Map {{ control_plane_endpoint }} to the IPv4 loopback"
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        line: "127.0.0.1 {{ control_plane_endpoint }}"
+        state: present
+        owner: root
+        group: root
+        mode: "0644"
+      when: cp_name_v4.rc != 0
+
+    - name: Initialize the control plane with kubeadm
+      ansible.builtin.command: >
+        kubeadm init
+        --control-plane-endpoint={{ control_plane_endpoint }}:6443
+        --pod-network-cidr={{ pod_network_cidr }}
+        --cri-socket=unix:///var/run/crio/crio.sock
+        --apiserver-cert-extra-sans=127.0.0.1,localhost,{{ control_plane_endpoint }},{{ ansible_hostname }}
+      args:
+        creates: /etc/kubernetes/admin.conf
+
+    - name: "Ensure {{ admin_user }} .kube directory exists"
+      ansible.builtin.file:
+        path: "/home/{{ admin_user }}/.kube"
+        state: directory
+        owner: "{{ admin_user }}"
+        group: "{{ admin_user }}"
+        mode: "0700"
+
+    - name: "Copy admin kubeconfig for {{ admin_user }}"
+      ansible.builtin.copy:
+        src: /etc/kubernetes/admin.conf
+        dest: "/home/{{ admin_user }}/.kube/config"
+        remote_src: true
+        owner: "{{ admin_user }}"
+        group: "{{ admin_user }}"
+        mode: "0600"
+
+    - name: Publish the control plane's routable address for worker nodes
+      ansible.builtin.set_fact:
+        control_plane_ip: "{{ ansible_default_ipv4.address }}"
+
+    - name: Download Helm install script
+      ansible.builtin.get_url:
+        url: https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+        dest: /tmp/get_helm.sh
+        mode: "0755"
+
+    - name: Install Helm
+      ansible.builtin.command: /tmp/get_helm.sh
+      args:
+        creates: /usr/local/bin/helm
+
+    - name: Add Cilium Helm repository
+      ansible.builtin.command: helm repo add cilium https://helm.cilium.io/
+      become_user: "{{ admin_user }}"
+      environment:
+        KUBECONFIG: "/home/{{ admin_user }}/.kube/config"
+      register: cilium_repo_add
+      changed_when: "'already exists' not in cilium_repo_add.stdout"
+
+    - name: Update Helm repositories
+      ansible.builtin.command: helm repo update
+      become_user: "{{ admin_user }}"
+      environment:
+        KUBECONFIG: "/home/{{ admin_user }}/.kube/config"
+      changed_when: false
+
+    - name: Install Cilium CNI plugin
+      ansible.builtin.command: helm upgrade --install cilium cilium/cilium --version 1.18.6 --namespace kube-system
+      become_user: "{{ admin_user }}"
+      environment:
+        KUBECONFIG: "/home/{{ admin_user }}/.kube/config"
+
+    - name: Generate kubeadm join command for worker nodes
+      ansible.builtin.command: kubeadm token create --print-join-command
+      register: kubeadm_join_command_result
+      changed_when: false
+
+    - name: Store join command for worker nodes
+      ansible.builtin.set_fact:
+        kubeadm_join_command: "{{ kubeadm_join_command_result.stdout }}"
+
+    - name: Assert the join command targets the control plane hostname
+      ansible.builtin.assert:
+        that:
+          - "'kubeadm join ' ~ control_plane_endpoint ~ ':6443' in kubeadm_join_command"
+        fail_msg: >-
+          Join command still targets an IP: {{ kubeadm_join_command }}.
+          This cluster was initialized before --control-plane-endpoint was set.
+          Run `sudo kubeadm reset -f` on {{ control_plane_endpoint }} and re-run.

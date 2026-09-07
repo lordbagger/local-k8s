@@ -1,0 +1,225 @@
+---
+- name: Install Kubernetes on worker nodes (Debian and RedHat based)
+  hosts: nodes
+  vars:
+    kubernetes_version: v1.36
+    crio_version: v1.36
+    control_plane_host: "{{ groups['control_plane'][0] }}"
+    control_plane_endpoint: "{{ groups['control_plane'][0] }}"
+  become: true
+
+  tasks:
+    - name: Ensure curl and gpg are installed
+      ansible.builtin.package:
+        name:
+          - curl
+          - gpg
+        state: present
+        update_cache: true
+      when: ansible_facts['os_family'] == 'Debian'
+
+    - name: Add repository for CRI-O (Debian)
+      when: ansible_facts['os_family'] == 'Debian'
+      block:
+        - name: "Ensure /etc/apt/keyrings/crio/ directory exists"
+          ansible.builtin.file:
+            path: /etc/apt/keyrings/crio/
+            state: directory
+
+        - name: Check if CRI-O apt keyring already exists
+          ansible.builtin.stat:
+            path: /etc/apt/keyrings/cri-o-apt-keyring.gpg
+          register: crio_keyring
+
+        - name: Download key for CRI-O apt repository
+          ansible.builtin.get_url:
+            url: https://download.opensuse.org/repositories/isv:/cri-o:/stable:/{{ crio_version }}/deb/Release.key
+            dest: /etc/apt/keyrings/crio/Release.key
+          when: not crio_keyring.stat.exists
+
+        - name: Convert Release.key into .gpg format
+          ansible.builtin.command: gpg --dearmor -o /etc/apt/keyrings/cri-o-apt-keyring.gpg /etc/apt/keyrings/crio/Release.key
+          args:
+            creates: /etc/apt/keyrings/cri-o-apt-keyring.gpg
+
+        - name: Add specified repository into sources list using specified filename
+          ansible.builtin.apt_repository:
+            repo: deb [signed-by=/etc/apt/keyrings/cri-o-apt-keyring.gpg] https://download.opensuse.org/repositories/isv:/cri-o:/stable:/{{ crio_version }}/deb/ /
+            state: present
+            filename: cri-o
+
+    - name: Add repository for Kubernetes (Debian)
+      when: ansible_facts['os_family'] == 'Debian'
+      block:
+        - name: "Ensure /etc/apt/keyrings/kubernetes/ directory exists"
+          ansible.builtin.file:
+            path: /etc/apt/keyrings/kubernetes/
+            state: directory
+
+        - name: Check if Kubernetes apt keyring already exists
+          ansible.builtin.stat:
+            path: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+          register: kubernetes_keyring
+
+        - name: Download key for Kubernetes apt repository
+          ansible.builtin.get_url:
+            url: https://pkgs.k8s.io/core:/stable:/{{ kubernetes_version }}/deb/Release.key
+            dest: /etc/apt/keyrings/kubernetes/Release.key
+          when: not kubernetes_keyring.stat.exists
+
+        - name: Convert Release.key into .gpg format
+          ansible.builtin.command: gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg /etc/apt/keyrings/kubernetes/Release.key
+          args:
+            creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+        - name: Add specified repository into sources list using specified filename
+          ansible.builtin.apt_repository:
+            repo: deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/{{ kubernetes_version }}/deb/ /
+            state: present
+            filename: kubernetes
+
+    - name: Adds Kubernetes repository (RedHat)
+      ansible.builtin.template:
+        src: templates/kubernetes.repo.j2
+        dest: /etc/yum.repos.d/kubernetes.repo
+      when: ansible_facts['os_family'] == 'RedHat'
+
+    - name: Adds CRI-O repository (RedHat)
+      ansible.builtin.template:
+        src: templates/cri-o.repo.j2
+        dest: /etc/yum.repos.d/cri-o.repo
+      when: ansible_facts['os_family'] == 'RedHat'
+
+    - name: Install CRI-O, kubeadm, kubelet, kubectl and cri-tools (Debian)
+      ansible.builtin.package:
+        name:
+          - cri-o
+          - kubeadm
+          - kubelet
+          - kubectl
+          - cri-tools
+        state: present
+      when: ansible_facts['os_family'] == 'Debian'
+
+    - name: Install CRI-O, kubeadm, kubelet, kubectl and cri-tools (RedHat)
+      ansible.builtin.package:
+        name:
+          - cri-o
+          - kubeadm
+          - kubelet
+          - kubectl
+          - cri-tools
+          - container-selinux
+        state: present
+      when: ansible_facts['os_family'] == 'RedHat'
+
+    - name: Install dnf versionlock plugin (RedHat)
+      ansible.builtin.package:
+        name: python3-dnf-plugin-versionlock
+        state: present
+      when: ansible_facts['os_family'] == 'RedHat'
+
+    - name: Lock kubeadm, kubelet, kubectl and cri-o versions (RedHat)
+      ansible.builtin.command: dnf versionlock add kubeadm kubelet kubectl cri-o
+      register: versionlock_result
+      changed_when: "'Adding versionlock' in versionlock_result.stdout"
+      when: ansible_facts['os_family'] == 'RedHat'
+
+    - name: Hold kubeadm, kubelet, kubectl and cri-o versions (Debian)
+      ansible.builtin.dpkg_selections:
+        name: "{{ item }}"
+        selection: hold
+      loop:
+        - kubeadm
+        - kubelet
+        - kubectl
+        - cri-o
+      when: ansible_facts['os_family'] == 'Debian'
+
+    - name: Enable and start CRI-O
+      ansible.builtin.service:
+        name: crio
+        state: started
+        enabled: true
+
+    - name: Enable and start kubelet
+      ansible.builtin.service:
+        name: kubelet
+        state: started
+        enabled: true
+
+    - name: Check active swap
+      ansible.builtin.command: swapon --show
+      register: swap_status
+      changed_when: false
+
+    - name: Disable swap
+      ansible.builtin.command: swapoff -a
+      when: swap_status.stdout != ""
+
+    - name: Disable swap on startup
+      ansible.builtin.replace:
+        path: /etc/fstab
+        regexp: '^([^#\n]*\sswap\s+swap\s.*)$'
+        replace: '#\1'
+
+    - name: Ensuring structure required for Cilium (CNI plugin) exists
+      block:
+        - name: Ensure /run/systemd/resolve/ directory exists
+          ansible.builtin.file:
+            path: /run/systemd/resolve/
+            state: directory
+
+        - name: Ensure /run/systemd/resolve/resolv.conf exists
+          ansible.builtin.file:
+            path: /run/systemd/resolve/resolv.conf
+            state: touch
+
+    - name: Persist br_netfilter kernel module across reboots
+      ansible.builtin.copy:
+        dest: /etc/modules-load.d/k8s.conf
+        content: "br_netfilter\n"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Load br_netfilter kernel module
+      community.general.modprobe:
+        name: br_netfilter
+        state: present
+
+    - name: Configure sysctl for Kubernetes networking
+      ansible.builtin.template:
+        src: templates/k8s-networking.conf.j2
+        dest: /etc/sysctl.d/k8s.conf
+        owner: root
+        group: root
+        mode: "0644"
+
+    # This task is here only to reload sysctl without reboot
+    - name: Reload sysctl settings for Kubernetes networking
+      ansible.posix.sysctl:
+        name: "{{ item }}"
+        value: "1"
+        sysctl_set: true
+        state: present
+        reload: true
+      loop:
+        - net.ipv4.ip_forward
+        - net.bridge.bridge-nf-call-iptables
+        - net.bridge.bridge-nf-call-ip6tables
+
+    - name: "Ensure {{ control_plane_endpoint }} resolves on this worker"
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        regexp: '^\S+\s+{{ control_plane_endpoint }}\s*$'
+        line: "{{ hostvars[control_plane_host]['control_plane_ip'] }} {{ control_plane_endpoint }}"
+        state: present
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Join the cluster with kubeadm
+      ansible.builtin.command: "{{ hostvars[control_plane_host]['kubeadm_join_command'] }}"
+      args:
+        creates: /etc/kubernetes/kubelet.conf

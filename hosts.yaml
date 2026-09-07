@@ -1,12 +1,17 @@
 nodes:
   vars:
-    user: brokk
+    user: sindri
     primary_group: "{{ user }}"
     additional_groups:
       - sudo
       - ssh-user
-    ssh_public_key_path: ~/.ssh/brokk.pub
+    ssh_public_key_path: ~/.ssh/sindri.pub
   hosts:
-    node1:
-    node2:
-    node3:
+    vanaheim:
+    jotunheim:
+    nilfheim:
+
+control_plane:
+  hosts:
+    midgard:
+      ansible_connection: local
