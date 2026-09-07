@@ -34,10 +34,26 @@ Command: ansible-playbook -i hosts.yaml configure-ssh.yaml --connection-password
 
 After the playbook exits successfully, all ssh connectivity is done with the created user and its public key
 
-## Install Kubernetes on Worker Nodes:
+## Install Kubernetes (control plane, then worker nodes, then join):
 
-ansible-playbook -i hosts.yaml install-kubernetes-worker-nodes.yaml --become-password-file password_file
+ansible-playbook -i hosts.yaml site.yaml --become-password-file become_password
 
-## Join the Worker Node in the Cluster:
+This runs install-kubernetes-control-plane-revised.yaml followed by
+install-kubernetes-worker-nodes-revised.yaml in order, and automatically joins
+each worker node to the cluster using a join token generated on the control
+plane. No manual steps are required after this command finishes.
 
-bash kubeadm.bash
+## Control plane addressing
+
+The cluster is initialized with `--control-plane-endpoint=midgard:6443`, so worker
+nodes register against the **hostname** `midgard`, never against its IP address.
+
+- On the control plane, `midgard` maps to `127.0.0.1`, so its own kubectl keeps
+  working no matter which network the laptop is on.
+- On each worker, the playbook writes midgard's current routable IP into
+  `/etc/hosts`.
+
+When the control plane's IP changes, just re-run `site.yaml`. It rewrites the
+worker `/etc/hosts` entries in place; no certificates and no re-initialization
+are needed. See NETWORK-RECOVERY.md for recovering a cluster that was built
+before this change.
