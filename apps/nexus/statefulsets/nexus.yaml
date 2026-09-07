@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  labels:
+    app: nexus
+  name: nexus
+  namespace: nexus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nexus
+  template:
+    metadata:
+      labels:
+        app: nexus
+    spec:
+      volumes:
+        - name: nexus-data
+          persistentVolumeClaim:
+            claimName: nexus-data-pvc
+      containers:
+        - image: sonatype/nexus3:3.95.3-ubi
+          name: nexus
+          volumeMounts:
+            - name: nexus-data
+              mountPath: /nexus-data
+status: {}
