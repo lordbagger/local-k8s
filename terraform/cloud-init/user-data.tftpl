@@ -1,0 +1,40 @@
+#cloud-config
+hostname: ${hostname}
+fqdn: ${hostname}
+manage_etc_hosts: true
+
+groups:
+  - sudo
+  - ssh-user
+
+users:
+  - name: ${ssh_user}
+    groups: [sudo, ssh-user]
+    shell: /bin/bash
+    lock_passwd: true
+    sudo: ["ALL=(ALL) NOPASSWD:ALL"]
+    ssh_authorized_keys:
+      - ${ssh_public_key}
+
+# Without package_update, apt installs run against the image's stale index and
+# fail. This is what left qemu-guest-agent uninstalled on 2 of 3 workers.
+package_update: true
+
+packages:
+  - openssh-server
+  - qemu-guest-agent
+
+runcmd:
+  # qemu-guest-agent's unit is udev-activated by the virtio-serial port, which
+  # is probed before cloud-init installs the package, so the rule never fires
+  # on first boot. Start it explicitly.
+  - [systemctl, enable, --now, qemu-guest-agent]
+
+disable_root: true
+ssh_pwauth: false
+
+growpart:
+  mode: auto
+  devices: ["/"]
+
+resize_rootfs: true
